@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Personalized Shopping Assistant</title>
+    <style>
+        :root {
+            --primary-color: #1a1a1a;
+            --secondary-color: #f4f4f5;
+            --accent-color: #2563eb;
+            --text-color: #3f3f46;
+            --bg-color: #fafafa;
+            --chat-bg: #ffffff;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 600px;
+            height: 85vh;
+            background: var(--chat-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #e4e4e7;
+        }
+
+        .chat-header {
+            background: var(--primary-color);
+            color: #ffffff;
+            padding: 16px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .chat-log {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            line-height: 1.5;
+            font-size: 0.95rem;
+            /* FIX: preserve \n line breaks used in multi-line recommendation text */
+            white-space: pre-line;
+        }
+
+        .message.assistant {
+            background: var(--secondary-color);
+            color: var(--text-color);
+            align-self: flex-start;
+            border-top-left-radius: 2px;
+        }
+
+        .message.user {
+            background: var(--accent-color);
+            color: #ffffff;
+            align-self: flex-end;
+            border-top-right-radius: 2px;
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            align-self: flex-start;
+            background: var(--secondary-color);
+            padding: 12px 16px;
+            border-radius: 8px;
+            border-top-left-radius: 2px;
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-indicator span {
+            width: 6px;
+            height: 6px;
+            background: #9ca3af;
+            border-radius: 50%;
+            animation: blink 1.2s infinite ease-in-out;
+        }
+
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes blink {
+            0%, 80%, 100% { opacity: 0.3; }
+            40% { opacity: 1; }
+        }
+
+        /* Interactive Elements inside Chat */
+        .interactive-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+            align-self: flex-start;
+        }
+
+        .btn-quick-reply {
+            background: #ffffff;
+            border: 1px solid var(--accent-color);
+            color: var(--accent-color);
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .btn-quick-reply:hover {
+            background: var(--accent-color);
+            color: #ffffff;
+        }
+
+        .btn-quick-reply.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            border-color: #d4d4d8;
+            color: #a1a1aa;
+        }
+
+        .btn-quick-reply.disabled:hover {
+            background: #ffffff;
+            color: #a1a1aa;
+        }
+
+        /* Inline Forms */
+        .inline-form {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 16px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 4px;
+            align-self: flex-start;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #64748b;
+        }
+
+        .form-group input {
+            padding: 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            outline: none;
+            font-size: 0.9rem;
+        }
+
+        .form-error {
+            font-size: 0.8rem;
+            color: #dc2626;
+            display: none;
+        }
+
+        .btn-submit-form {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+
+        /* Input Area */
+        .chat-input-area {
+            padding: 16px;
+            border-top: 1px solid #e4e4e7;
+            display: flex;
+            gap: 8px;
+            background: #fafafa;
+        }
+
+        .chat-input-area input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #d4d4d8;
+            border-radius: 6px;
+            outline: none;
+            font-size: 0.95rem;
+        }
+
+        .chat-input-area button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .chat-input-area button:hover {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="chat-header">Shopping Assistant</div>
+    <div class="chat-log" id="chatLog">
+        <div class="message assistant">
+            Welcome! To get started, please drop a clothing website URL that you would like me to scan.
+        </div>
+    </div>
+    <div class="chat-input-area">
+        <input type="text" id="userInput" placeholder="Type your message or URL here..." autocomplete="off">
+        <button id="sendBtn" onclick="handleSend()">Send</button>
+    </div>
+</div>
+
+<script>
+    // Generate a simple session ID to maintain backend state tracking
+    const sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
+    const BACKEND_URL = 'http://localhost:8000'; // Update with your actual FastAPI address
+
+    const chatLog = document.getElementById('chatLog');
+    const userInput = document.getElementById('userInput');
+
+    // Flow tracker for local UI state (mirrors backend LangGraph stage)
+    let currentStep = 'URL_INPUT';
+
+    // Collected profile data, sent to backend as it's gathered
+    const userProfile = {
+        name: null,
+        phone: null,
+        gender: null,
+        category: null
+    };
+
+    // Helper: Add message bubble to chat log
+    function appendMessage(text, sender) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message ${sender}`;
+        msgDiv.innerText = text; // safe: innerText, no HTML injection; white-space:pre-line preserves \n
+        chatLog.appendChild(msgDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        return msgDiv;
+    }
+
+    // Helper: show/hide a typing indicator while "waiting" on backend
+    function showTyping() {
+        const el = document.createElement('div');
+        el.className = 'typing-indicator';
+        el.id = 'typingIndicator';
+        el.innerHTML = '<span></span><span></span><span></span>';
+        chatLog.appendChild(el);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function hideTyping() {
+        const el = document.getElementById('typingIndicator');
+        if (el) el.remove();
+    }
+
+    // Capture standard enter keypress
+    userInput.addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') handleSend();
+    });
+
+    // Main user text input router
+    function handleSend() {
+        const text = userInput.value.trim();
+        if (!text) return;
+
+        appendMessage(text, 'user');
+        userInput.value = '';
+
+        if (currentStep === 'URL_INPUT') {
+            submitUrlToBackend(text);
+        } else if (currentStep === 'PROFILE_NAME') {
+            // FIX: name was previously captured on screen but never stored/used
+            userProfile.name = text;
+            currentStep = 'PROFILE_PHONE';
+            appendMessage(`Nice to meet you, ${text}! What's your phone number? (optional — type "skip" to continue without it)`, 'assistant');
+        } else if (currentStep === 'PROFILE_PHONE') {
+            // FIX: phone number was never collected despite being in the DB schema
+            userProfile.phone = (text.toLowerCase() === 'skip') ? null : text;
+            currentStep = 'GENDER_SELECTION';
+            appendMessage("Great! Please choose your target gender category:", "assistant");
+            renderGenderSelection();
+        } else {
+            sendMessageToBackend({ text: text });
+        }
+    }
+
+    // Step 1: Submit Scrape URL
+    async function submitUrlToBackend(url) {
+        showTyping();
+
+        try {
+            // Real backend call (uncomment once FastAPI endpoint is live):
+            /*
+            const response = await fetch(`${BACKEND_URL}/api/scrape`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, url: url })
+            });
+            const data = await response.json();
+            */
+
+            // Mocked response for UI preview
+            setTimeout(() => {
+                hideTyping();
+                appendMessage("Scraping completed! Catalog populated successfully. Let's start with your profile. What is your name?", "assistant");
+                currentStep = 'PROFILE_NAME';
+            }, 1200);
+
+        } catch (error) {
+            hideTyping();
+            appendMessage("Error connecting to server. Please ensure the backend is running.", "assistant");
+        }
+    }
+
+    // General message pipeline (post-profile conversation loop)
+    async function sendMessageToBackend(payload) {
+        showTyping();
+        try {
+            // Real backend call (uncomment once FastAPI endpoint is live):
+            /*
+            const response = await fetch(`${BACKEND_URL}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, ...payload })
+            });
+            const data = await response.json();
+            hideTyping();
+            appendMessage(data.reply, "assistant");
+            */
+            hideTyping();
+        } catch (error) {
+            hideTyping();
+            console.error(error);
+        }
+    }
+
+    // Render quick-reply buttons for gender choice
+    function renderGenderSelection() {
+        const container = document.createElement('div');
+        container.className = 'interactive-container';
+
+        const maleBtn = document.createElement('button');
+        maleBtn.className = 'btn-quick-reply';
+        maleBtn.innerText = "Men's Wear";
+        maleBtn.onclick = () => handleGenderSelect('Men');
+
+        const femaleBtn = document.createElement('button');
+        // FIX: disable rather than allow-then-redirect, since women's wear isn't built yet
+        femaleBtn.className = 'btn-quick-reply disabled';
+        femaleBtn.innerText = "Women's Wear (Coming Soon)";
+        femaleBtn.title = "Women's wear support is planned for a future phase";
+        femaleBtn.onclick = (e) => e.preventDefault();
+
+        container.appendChild(maleBtn);
+        container.appendChild(femaleBtn);
+        chatLog.appendChild(container);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function handleGenderSelect(gender) {
+        userProfile.gender = gender;
+        appendMessage(gender + " Wear", 'user');
+        appendMessage("Awesome. Select your desired apparel category:", "assistant");
+        renderCategorySelection();
+    }
+
+    // Render quick-reply buttons for categories
+    function renderCategorySelection() {
+        const categories = ['Casual', 'Formal', 'Smart Casual', 'Sportswear', 'Party Wear'];
+        const container = document.createElement('div');
+        container.className = 'interactive-container';
+
+        categories.forEach(cat => {
+            const btn = document.createElement('button');
+            btn.className = 'btn-quick-reply';
+            btn.innerText = cat;
+            btn.onclick = () => {
+                userProfile.category = cat;
+                appendMessage(cat, 'user');
+                appendMessage("Got it. Now, please complete your profiling metrics below so I can compute your sizing and matching options:", "assistant");
+                renderMeasurementForm(cat);
+            };
+            container.appendChild(btn);
+        });
+
+        chatLog.appendChild(container);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    // Render inline measurement & budget form
+    function renderMeasurementForm(category) {
+        const formDiv = document.createElement('div');
+        formDiv.className = 'inline-form';
+        formDiv.innerHTML = `
+            <div class="form-group">
+                <label>Age</label>
+                <input type="number" id="formAge" placeholder="e.g. 25" required>
+            </div>
+            <div class="form-group">
+                <label>Height (cm)</label>
+                <input type="number" id="formHeight" placeholder="e.g. 175" required>
+            </div>
+            <div class="form-group">
+                <label>Weight (kg)</label>
+                <input type="number" id="formWeight" placeholder="e.g. 70" required>
+            </div>
+            <div class="form-group">
+                <label>Waist Size (inches)</label>
+                <input type="number" id="formWaist" placeholder="e.g. 32" required>
+            </div>
+            <div class="form-group">
+                <label>Maximum Budget (Rs.)</label>
+                <input type="number" id="formBudget" placeholder="e.g. 10000" required>
+            </div>
+            <div class="form-error" id="formError">Please fill in all fields before submitting.</div>
+            <button class="btn-submit-form" onclick="submitMeasurements('${category}')">Submit Preferences</button>
+        `;
+        chatLog.appendChild(formDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    // Step 4: handle form payload compilation
+    function submitMeasurements(category) {
+        const age = document.getElementById('formAge').value;
+        const height = document.getElementById('formHeight').value;
+        const weight = document.getElementById('formWeight').value;
+        const waist = document.getElementById('formWaist').value;
+        const budget = document.getElementById('formBudget').value;
+        const errorEl = document.getElementById('formError');
+
+        if (!age || !height || !weight || !waist || !budget) {
+            // FIX: inline error instead of browser alert()
+            errorEl.style.display = 'block';
+            return;
+        }
+        errorEl.style.display = 'none';
+
+        appendMessage(
+            `Age: ${age}, Height: ${height}cm, Weight: ${weight}kg, Waist: ${waist}". Budget: Rs. ${budget}`,
+            'user'
+        );
+
+        // Remove the form now that it's submitted
+        document.querySelector('.inline-form').remove();
+
+        showTyping();
+
+        // Mocked Recommendation Agent output (replace with real fetch to /api/recommend)
+        setTimeout(() => {
+            hideTyping();
+            appendMessage(
+                `✨ Recommended Outfit (${category}) ✨\n\n` +
+                `👕 Shirt: Oxford Cotton Shirt (Size M) - Rs. 4500 [10% off, ends this weekend]\n` +
+                `👖 Pant: Slim-Fit Chinos (Size 32) - Rs. 3500\n` +
+                `👟 Shoes: Classic Minimal Sneaker (Size 9) - Rs. 2000\n\n` +
+                `💰 Total: Rs. 10000 (within your budget)\n` +
+                `📝 Fit calculated from your height, weight, and waist. Let me know if you'd like a different budget or category!`,
+                "assistant"
+            );
+            currentStep = 'CONVERSATION_LOOP';
+        }, 1500);
+    }
+</script>
+
+</body>
+</html>

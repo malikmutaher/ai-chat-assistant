@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+langchain
+langgraph
+langchain-ollama
+langchain-community
+selenium
+beautifulsoup4
+pydantic
+python-dotenv
