@@ -9,8 +9,11 @@ Then point shopping_assistant_frontend.html's BACKEND_URL at this server
 its <script> block.
 """
 
+from pathlib import Path 
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from database.db import init_db
@@ -31,6 +34,10 @@ app.add_middleware(
 app.include_router(scrape_router)
 app.include_router(profile_router)
 app.include_router(chat_router)
+
+# Serve frontend static files (must be last so API routes take priority)
+BASE_DIR = Path(__file__).parent
+app.mount("/", StaticFiles(directory=str(BASE_DIR), html=True), name="static")
 
 
 @app.on_event("startup")

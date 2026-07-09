@@ -259,6 +259,8 @@
 
     // Flow tracker for local UI state (mirrors backend LangGraph stage)
     let currentStep = 'URL_INPUT';
+    let websiteId = null; // returned by /api/scrape
+    let userId = null;    // returned by /api/profile
 
     // Collected profile data, sent to backend as it's gathered
     const userProfile = {
@@ -329,22 +331,22 @@
         showTyping();
 
         try {
-            // Real backend call (uncomment once FastAPI endpoint is live):
-            /*
             const response = await fetch(`${BACKEND_URL}/api/scrape`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId, url: url })
+                body: JSON.stringify({ url: url })
             });
             const data = await response.json();
-            */
+            hideTyping();
 
-            // Mocked response for UI preview
-            setTimeout(() => {
-                hideTyping();
-                appendMessage("Scraping completed! Catalog populated successfully. Let's start with your profile. What is your name?", "assistant");
-                currentStep = 'PROFILE_NAME';
-            }, 1200);
+            if (!response.ok) {
+                appendMessage(data.detail || "Scraping failed.", "assistant");
+                return;
+            }
+
+            websiteId = data.website_id;
+            appendMessage(data.message + " Let's start with your profile. What is your name?", "assistant");
+            currentStep = 'PROFILE_NAME';
 
         } catch (error) {
             hideTyping();
@@ -356,18 +358,30 @@
     async function sendMessageToBackend(payload) {
         showTyping();
         try {
-            // Real backend call (uncomment once FastAPI endpoint is live):
-            /*
             const response = await fetch(`${BACKEND_URL}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId, ...payload })
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    website_id: websiteId,
+                    message: payload.text,
+                    new_request: false
+                })
             });
             const data = await response.json();
             hideTyping();
-            appendMessage(data.reply, "assistant");
-            */
-            hideTyping();
+
+            if (!response.ok) {
+                appendMessage(data.detail || "Something went wrong.", "assistant");
+                return;
+            }
+
+            appendMessage(data.reply || "I'm not sure how to respond to that.", "assistant");
+
+            // If the backend returned a recommendation, update stage
+            if (data.is_ready && data.shirt_size) {
+                currentStep = 'RECOMMENDATION';
+            }
         } catch (error) {
             hideTyping();
             console.error(error);
@@ -397,9 +411,30 @@
         chatLog.scrollTop = chatLog.scrollHeight;
     }
 
-    function handleGenderSelect(gender) {
+    async function handleGenderSelect(gender) {
         userProfile.gender = gender;
         appendMessage(gender + " Wear", 'user');
+
+        // Save profile to backend
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/profile`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    name: userProfile.name,
+                    gender: userProfile.gender,
+                    phone: userProfile.phone
+                })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                userId = data.user_id;
+            }
+        } catch (e) {
+            // Non-blocking — continue even if profile save fails
+        }
+
         appendMessage("Awesome. Select your desired apparel category:", "assistant");
         renderCategorySelection();
     }
@@ -460,7 +495,7 @@
     }
 
     // Step 4: handle form payload compilation
-    function submitMeasurements(category) {
+    async function submitMeasurements(category) {
         const age = document.getElementById('formAge').value;
         const height = document.getElementById('formHeight').value;
         const weight = document.getElementById('formWeight').value;
@@ -469,7 +504,6 @@
         const errorEl = document.getElementById('formError');
 
         if (!age || !height || !weight || !waist || !budget) {
-            // FIX: inline error instead of browser alert()
             errorEl.style.display = 'block';
             return;
         }
@@ -480,25 +514,41 @@
             'user'
         );
 
-        // Remove the form now that it's submitted
         document.querySelector('.inline-form').remove();
 
         showTyping();
 
-        // Mocked Recommendation Agent output (replace with real fetch to /api/recommend)
-        setTimeout(() => {
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    website_id: websiteId,
+                    category: category,
+                    age: parseInt(age),
+                    height_cm: parseFloat(height),
+                    weight_kg: parseFloat(weight),
+                    waist_in: parseFloat(waist),
+                    budget: parseFloat(budget),
+                    new_request: true
+                })
+            });
+            const data = await response.json();
             hideTyping();
-            appendMessage(
-                `✨ Recommended Outfit (${category}) ✨\n\n` +
-                `👕 Shirt: Oxford Cotton Shirt (Size M) - Rs. 4500 [10% off, ends this weekend]\n` +
-                `👖 Pant: Slim-Fit Chinos (Size 32) - Rs. 3500\n` +
-                `👟 Shoes: Classic Minimal Sneaker (Size 9) - Rs. 2000\n\n` +
-                `💰 Total: Rs. 10000 (within your budget)\n` +
-                `📝 Fit calculated from your height, weight, and waist. Let me know if you'd like a different budget or category!`,
-                "assistant"
-            );
+
+            if (!response.ok) {
+                appendMessage(data.detail || "Something went wrong. Please try again.", "assistant");
+                return;
+            }
+
+            appendMessage(data.reply || "Here are your recommendations!", "assistant");
             currentStep = 'CONVERSATION_LOOP';
-        }, 1500);
+
+        } catch (error) {
+            hideTyping();
+            appendMessage("Error connecting to server. Please ensure the backend is running.", "assistant");
+        }
     }
 </script>
 

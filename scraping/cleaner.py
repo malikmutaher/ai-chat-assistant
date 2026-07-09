@@ -126,19 +126,50 @@ def _guess_name(card: Tag, fallback_text: str) -> str:
 
 def _find_product_cards(soup: BeautifulSoup) -> List[Tag]:
     """
-    Finds candidate "product card" elements: the smallest container that
-    holds a price pattern, walking up from the price's text node until we
-    hit an element that also contains an image or heading (a decent signal
-    it's a whole product card rather than just a stray price string).
+    Finds candidate "product card" elements using two strategies, since a
+    single depth-limited walk misses cards on themes with deep nesting:
+
+    1. Price-anchored walk: starting from the price's text node, walk up
+       until we hit an element that also contains an image or heading (a
+       decent signal it's a whole product card rather than just a stray
+       price string).
+    2. Shopify-link anchored walk: many storefronts (very common for
+       Pakistani clothing sites) are built on Shopify, where every product
+       card contains an <a href="/products/..."> link. Themes with deeply
+       nested markup (e.g. "Kalles") can put the shared price+image
+       ancestor more than a few levels above the price text, so this
+       second pass anchors on the product link instead and walks up to
+       find a container that also has a price nearby. This catches cards
+       the price-only walk misses.
+
+    Cards found by either strategy are merged and deduplicated by element
+    identity.
     """
     cards: List[Tag] = []
     seen: set = set()
+    MAX_DEPTH = 8
 
+    # Strategy 1: walk up from price text nodes.
     for text_node in soup.find_all(string=PRICE_PATTERN):
         el = text_node.parent
         depth = 0
-        while el is not None and depth < 6:
+        while el is not None and depth < MAX_DEPTH:
             if el.find(["img", "h1", "h2", "h3", "h4", "h5"]) is not None:
+                if id(el) not in seen:
+                    seen.add(id(el))
+                    cards.append(el)
+                break
+            el = el.parent
+            depth += 1
+
+    # Strategy 2: walk up from Shopify "/products/<handle>" links.
+    for link in soup.find_all("a", href=True):
+        if "/products/" not in link["href"]:
+            continue
+        el = link.parent
+        depth = 0
+        while el is not None and depth < MAX_DEPTH:
+            if el.find(string=PRICE_PATTERN) is not None:
                 if id(el) not in seen:
                     seen.add(id(el))
                     cards.append(el)
