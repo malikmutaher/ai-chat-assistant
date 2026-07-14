@@ -30,8 +30,10 @@ class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
     # Scraping
-    SCRAPE_WAIT_SECONDS: int = int(os.getenv("SCRAPE_WAIT_SECONDS", "10"))
-    SCRAPE_SCROLL_PASSES: int = int(os.getenv("SCRAPE_SCROLL_PASSES", "3"))
+    SCRAPE_WAIT_SECONDS: int = int(os.getenv("SCRAPE_WAIT_SECONDS", "5"))
+    SCRAPE_SCROLL_PASSES: int = int(os.getenv("SCRAPE_SCROLL_PASSES", "2"))
+    SCRAPE_MAX_SCROLLS: int = int(os.getenv("SCRAPE_MAX_SCROLLS", "8"))
+    SCRAPE_MAX_PAGES: int = int(os.getenv("SCRAPE_MAX_PAGES", "3"))
 
     # API
     CORS_ALLOW_ORIGINS: tuple = tuple(

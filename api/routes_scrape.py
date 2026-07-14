@@ -54,7 +54,8 @@ async def scrape(request: ScrapeRequest, db: Session = Depends(get_db)):
             request.url,
             wait_seconds=settings.SCRAPE_WAIT_SECONDS,
             scroll_passes=settings.SCRAPE_SCROLL_PASSES,
-            max_pages=100,
+            max_pages=settings.SCRAPE_MAX_PAGES,
+            max_scrolls=settings.SCRAPE_MAX_SCROLLS,
         )
         
         logger.debug(f"[STEP 2] Crawl result - success: {result.success}, html_length: {len(result.html) if result.html else 0}")

@@ -441,6 +441,7 @@ def crawl_website(
     wait_seconds: int = 20,
     scroll_passes: int = 3,
     max_pages: int = 100,
+    max_scrolls: int = 25,
 ) -> ScrapeResult:
     """
     Priority-queue BFS crawl starting from `start_url`.
@@ -449,7 +450,7 @@ def crawl_website(
     Returns aggregated HTML from all visited pages.
     """
     logger.info(f"[CRAWL_WEBSITE] Starting crawl: {start_url}")
-    logger.debug(f"[CRAWL_WEBSITE] Config - wait_seconds={wait_seconds}, scroll_passes={scroll_passes}, max_pages={max_pages}")
+    logger.debug(f"[CRAWL_WEBSITE] Config - wait_seconds={wait_seconds}, scroll_passes={scroll_passes}, max_pages={max_pages}, max_scrolls={max_scrolls}")
     
     start_url = _normalize_url(start_url)
     base_parsed = urlparse(start_url)
@@ -492,6 +493,7 @@ def crawl_website(
             url,
             wait_seconds=wait_seconds,
             scroll_passes=scroll_passes,
+            max_scrolls=max_scrolls,
         )
 
         if result.success:
