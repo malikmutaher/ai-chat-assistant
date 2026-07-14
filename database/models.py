@@ -31,6 +31,15 @@ from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
+# All known item types used across the app (cleaner, CRUD, agents).
+# Centralized here so every module reads from the same source of truth.
+ALL_ITEM_TYPES = [
+    "shirt", "pant", "jean", "shoes", "jacket", "hoodie", "sweater",
+    "blazer", "suit", "shorts", "trunks", "kurta", "polo", "t-shirt",
+    "trouser", "chino", "sneaker", "loafer", "boot", "watch",
+    "accessory", "bag", "belt", "cap", "socks", "innerwear", "other",
+]
+
 
 # ---------------------------------------------------------------------------
 # Enums — kept as plain string enums so they serialize cleanly to/from the
@@ -48,9 +57,9 @@ class Category(str, PyEnum):
     SMART_CASUAL = "Smart Casual"
     SPORTSWEAR = "Sportswear"
     PARTY_WEAR = "Party Wear"
-    # Reserved for the future women's-wear phase; harmless to keep now.
     OFFICE_WEAR = "Office Wear"
     ETHNIC_WEAR = "Ethnic/Traditional Wear"
+    OTHER = "Other"
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +128,9 @@ class User(Base):
     name = Column(String(100), nullable=False)
     phone = Column(String(20), nullable=True, unique=True)  # optional/skippable, but unique when given
     gender = Column(Enum(Gender), nullable=False)
+    # Pending item types selected by the user (comma-separated), survives
+    # turns when the frontend doesn't resend them.
+    pending_item_types = Column(String(200), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -142,6 +154,10 @@ class UserPreference(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     category = Column(Enum(Category), nullable=False)
+
+    # Item types the user wants (comma-separated, e.g. "shirt,pant,shoes")
+    # Populated by the qualification agent after asking the user what they want.
+    item_types = Column(String(200), nullable=True)
 
     age = Column(Integer, nullable=True)
     height_cm = Column(Float, nullable=True)

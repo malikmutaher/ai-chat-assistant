@@ -9,3 +9,4 @@ selenium
 beautifulsoup4
 pydantic
 python-dotenv
+webdriver-manager

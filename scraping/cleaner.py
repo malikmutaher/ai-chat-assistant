@@ -24,7 +24,7 @@ from typing import List, Optional
 
 from bs4 import BeautifulSoup, Tag
 
-from database.models import Category
+from database.models import ALL_ITEM_TYPES, Category
 
 
 # ---------------------------------------------------------------------------
@@ -46,9 +46,21 @@ CATEGORY_KEYWORDS = {
 }
 
 ITEM_TYPE_KEYWORDS = {
-    "shirt": ["shirt", "polo", "tee", "t-shirt", "kurta"],
-    "pant": ["pant", "trouser", "chino", "jean", "denim", "bottom"],
-    "shoes": ["shoe", "sneaker", "loafer", "boot", "sandal"],
+    "shirt": ["shirt", "kurta"],
+    "pant": ["pant", "trouser", "chino", "bottom"],
+    "jean": ["jean", "denim"],
+    "shoes": ["shoe", "sneaker", "loafer", "boot", "sandal", "slipper"],
+    "jacket": ["jacket", "bomber", "leather jacket"],
+    "hoodie": ["hoodie", "hoody", "sweatshirt"],
+    "sweater": ["sweater", "pullover", "cardigan"],
+    "blazer": ["blazer"],
+    "suit": ["suit"],
+    "shorts": ["shorts", "short"],
+    "trunks": ["trunks", "swim"],
+    "polo": ["polo"],
+    "t-shirt": ["t-shirt", "tee"],
+    "watch": ["watch"],
+    "accessory": ["accessory", "belt", "cap", "socks", "wallet", "bag"],
 }
 
 COLOR_KEYWORDS = [
@@ -78,20 +90,20 @@ def _parse_price(text: str) -> Optional[float]:
     return float(digits) if digits else None
 
 
-def _guess_category(text: str) -> Optional[Category]:
+def _guess_category(text: str) -> Category:
     lowered = text.lower()
     for category, keywords in CATEGORY_KEYWORDS.items():
         if any(kw in lowered for kw in keywords):
             return category
-    return None
+    return Category.OTHER
 
 
-def _guess_item_type(text: str) -> Optional[str]:
+def _guess_item_type(text: str) -> str:
     lowered = text.lower()
     for item_type, keywords in ITEM_TYPE_KEYWORDS.items():
         if any(kw in lowered for kw in keywords):
             return item_type
-    return None
+    return "other"
 
 
 def _guess_color(text: str) -> Optional[str]:
@@ -190,47 +202,84 @@ def clean_products(html: str, source_url: Optional[str] = None) -> List[CleanedP
     schema requires both (price is NOT NULL, category is NOT NULL), and a
     row we can't confidently classify would just pollute recommendations.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    cards = _find_product_cards(soup)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[CLEAN_PRODUCTS] Starting - HTML size: {len(html) if html else 0} bytes")
+    logger.debug(f"[CLEAN_PRODUCTS] Source URL: {source_url}")
+    
+    try:
+        if not html:
+            logger.warning("[CLEAN_PRODUCTS] Empty HTML provided")
+            return []
+        
+        logger.debug("[CLEAN_PRODUCTS] Parsing HTML with BeautifulSoup...")
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            logger.debug("[CLEAN_PRODUCTS] HTML parsed successfully")
+        except Exception as e:
+            logger.error(f"[CLEAN_PRODUCTS] Failed to parse HTML: {str(e)}")
+            raise
+        
+        logger.debug("[CLEAN_PRODUCTS] Finding product cards...")
+        try:
+            cards = _find_product_cards(soup)
+            logger.info(f"[CLEAN_PRODUCTS] Found {len(cards)} product cards")
+        except Exception as e:
+            logger.error(f"[CLEAN_PRODUCTS] Failed to find product cards: {str(e)}")
+            raise
+        
+        results: List[CleanedProduct] = []
+        dedup_keys = set()
+        cards_with_price = 0
+        cards_skipped = 0
 
-    results: List[CleanedProduct] = []
-    dedup_keys = set()
+        for idx, card in enumerate(cards):
+            try:
+                text = card.get_text(separator="\n", strip=True)
 
-    for card in cards:
-        text = card.get_text(separator="\n", strip=True)
+                price = _parse_price(text)
+                if price is None:
+                    cards_skipped += 1
+                    continue
+                
+                cards_with_price += 1
+                category = _guess_category(text)
+                name = _guess_name(card, text)
+                dedup_key = (name.lower(), price)
+                if dedup_key in dedup_keys:
+                    logger.debug(f"[CLEAN_PRODUCTS] Skipping duplicate: {name} @ {price}")
+                    continue
+                dedup_keys.add(dedup_key)
 
-        price = _parse_price(text)
-        if price is None:
-            continue
+                deal_match = DEAL_PATTERN.search(text)
 
-        category = _guess_category(text)
-        if category is None:
-            # Can't confidently bucket this into one of our five categories —
-            # skip rather than guess wrong and mislead the Recommendation Agent.
-            continue
+                product = CleanedProduct(
+                    name=name,
+                    price=price,
+                    category=category,
+                    item_type=_guess_item_type(text),
+                    size=_guess_size(text),
+                    color=_guess_color(text),
+                    deal_info=deal_match.group(0) if deal_match else None,
+                    source_url=source_url,
+                )
+                results.append(product)
+                logger.debug(f"[CLEAN_PRODUCTS] [{idx+1}] {name} - {category} @ PKR {price}")
+                
+            except Exception as e:
+                logger.warning(f"[CLEAN_PRODUCTS] Error processing card {idx}: {str(e)}")
+                cards_skipped += 1
+                continue
 
-        name = _guess_name(card, text)
-        dedup_key = (name.lower(), price)
-        if dedup_key in dedup_keys:
-            continue
-        dedup_keys.add(dedup_key)
-
-        deal_match = DEAL_PATTERN.search(text)
-
-        results.append(
-            CleanedProduct(
-                name=name,
-                price=price,
-                category=category,
-                item_type=_guess_item_type(text),
-                size=_guess_size(text),
-                color=_guess_color(text),
-                deal_info=deal_match.group(0) if deal_match else None,
-                source_url=source_url,
-            )
-        )
-
-    return results
+        logger.info(f"[CLEAN_PRODUCTS] Complete - {len(results)} products extracted, {cards_with_price} with prices, {cards_skipped} skipped")
+        return results
+        
+    except Exception as e:
+        logger.error(f"[CLEAN_PRODUCTS] Critical error in clean_products: {str(e)}")
+        import traceback
+        logger.error(f"[CLEAN_PRODUCTS] Traceback: {traceback.format_exc()}")
+        raise
 
 
 if __name__ == "__main__":

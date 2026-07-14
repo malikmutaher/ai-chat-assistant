@@ -25,6 +25,9 @@ class ConversationState(TypedDict, total=False):
     # Current qualification round
     preference_id: Optional[int]
     category: Optional[str]
+    # Item types the user wants (e.g. ["shirt", "pant", "shoes"])
+    # Populated by qualification agent after asking the user what they want.
+    item_types: Optional[list]
     age: Optional[int]
     height_cm: Optional[float]
     weight_kg: Optional[float]

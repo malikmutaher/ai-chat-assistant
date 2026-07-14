@@ -3,9 +3,10 @@ Recommendation Agent node.
 
 Deliberately splits into two parts:
   1. `find_best_combo()` — pure Python, no LLM. Picks the cheapest
-     available shirt/pant/shoes combo that fits the budget, dropping the
-     single most expensive item if the full combo doesn't fit. This is
-     the part that must never hallucinate, so it doesn't touch the LLM.
+     available items in each of the customer's chosen product types
+     (shirt/pant/shoes/...) that fit the budget, dropping the single most
+     expensive item if the full combo doesn't fit. This is the part that
+     must never hallucinate, so it doesn't touch the LLM.
   2. `recommendation_node()` — wraps (1) with DB access, then asks the LLM
      for ONLY a short reasoning sentence using the already-confirmed
      selection (see agents/prompts.py::REASON_PROMPT for why).
@@ -18,14 +19,22 @@ from langchain_ollama.llms import OllamaLLM
 from config import settings
 from database.db import SessionLocal
 from database.models import Category
-
 from database.crud import filter_products, save_recommendation
 from agents.state import ConversationState
 from agents.prompts import REASON_PROMPT
 
 llm = OllamaLLM(model=settings.OLLAMA_MODEL, base_url=settings.OLLAMA_BASE_URL)
 
-ITEM_LABELS = {"shirt": "👕 Shirt", "pant": "👖 Pant", "shoes": "👟 Shoes"}
+ITEM_ICONS = {
+    "shirt": "👕 Shirt", "pant": "👖 Pant", "jean": "👖 Jeans",
+    "shoes": "👟 Shoes", "jacket": "🧥 Jacket", "hoodie": "🧥 Hoodie",
+    "sweater": "🧥 Sweater", "blazer": "🧥 Blazer", "suit": "🤵 Suit",
+    "shorts": "🩳 Shorts", "trunks": "🩳 Trunks", "kurta": "👕 Kurta",
+    "polo": "👕 Polo", "t-shirt": "👕 T-Shirt", "trouser": "👖 Trouser",
+    "chino": "👖 Chino", "sneaker": "👟 Sneaker", "loafer": "👞 Loafer",
+    "boot": "👢 Boot", "watch": "⌚ Watch", "accessory": "🎒 Accessory",
+    "other": "📦 Item",
+}
 
 
 def find_best_combo(
@@ -67,13 +76,13 @@ def find_best_combo(
 
 def _format_selected_lines(selected: Dict[str, Optional[object]]) -> str:
     lines = []
-    for item_type, label in ITEM_LABELS.items():
-        product = selected.get(item_type)
+    for item_type, product in selected.items():
+        icon = ITEM_ICONS.get(item_type, f"📦 {item_type.capitalize()}")
         if product is not None:
             deal = f" [{product.deal_info}]" if getattr(product, "deal_info", None) else ""
-            lines.append(f"{label}: {product.name} - Rs. {product.price:.0f}{deal}")
+            lines.append(f"{icon}: {product.name} - Rs. {product.price:.0f}{deal}")
         else:
-            lines.append(f"{label}: Not available in your size/budget")
+            lines.append(f"{icon}: Not available in your size/budget")
     return "\n".join(lines)
 
 
@@ -82,11 +91,13 @@ def recommendation_node(state: ConversationState) -> dict:
     try:
         category = Category(state["category"])
         budget = state["budget"]
+        item_types = state.get("item_types")
 
         grouped = filter_products(
             db,
             website_id=state["website_id"],
             category=category,
+            item_types=item_types,
             shirt_size=state.get("shirt_size"),
             pant_size=state.get("pant_size"),
         )
@@ -110,8 +121,6 @@ def recommendation_node(state: ConversationState) -> dict:
                 )
             ).strip()
         except Exception:
-            # LLM unreachable — fall back to a plain templated reason rather
-            # than failing the whole recommendation.
             reason = (
                 f"These items match your {state['category']} category and fit within Rs. {budget:.0f}."
                 if not missing

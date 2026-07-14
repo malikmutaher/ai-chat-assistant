@@ -13,18 +13,23 @@ sizes, colors) rather than LangChain Document chunks for embedding.
 
 import logging
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from collections import deque
-from typing import List, Optional, Set
+from heapq import heappush, heappop
+from typing import List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
+
+import requests
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, WebDriverException
+from webdriver_manager.chrome import ChromeDriverManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,22 +61,46 @@ class ScrapeResult:
 
 
 def _build_driver(headless: bool = True) -> webdriver.Chrome:
-    options = Options()
-    # Return after the initial DOM is ready instead of waiting for every
-    # image/tracker/script. Storefronts often keep long-running requests open.
-    options.page_load_strategy = "eager"
-    if headless:
-        options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    # A realistic UA reduces the odds of being served a bot-blocked page.
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-    )
-    return webdriver.Chrome(options=options)
+    """Build Selenium Chrome WebDriver with comprehensive error handling."""
+    logger.info("[DRIVER_BUILD] Starting ChromeDriver initialization")
+    try:
+        options = Options()
+        # Return after the initial DOM is ready instead of waiting for every
+        # image/tracker/script. Storefronts often keep long-running requests open.
+        options.page_load_strategy = "eager"
+        if headless:
+            options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        # A realistic UA reduces the odds of being served a bot-blocked page.
+        options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        )
+        
+        logger.debug("[DRIVER_BUILD] Chrome options configured")
+        logger.info("[DRIVER_BUILD] Installing ChromeDriver using webdriver-manager...")
+        
+        try:
+            chromedriver_path = ChromeDriverManager().install()
+            logger.debug(f"[DRIVER_BUILD] ChromeDriver path: {chromedriver_path}")
+        except Exception as e:
+            logger.error(f"[DRIVER_BUILD] Failed to install ChromeDriver: {str(e)}")
+            raise
+        
+        service = Service(chromedriver_path)
+        logger.debug("[DRIVER_BUILD] Service created")
+        
+        driver = webdriver.Chrome(service=service, options=options)
+        logger.info("[DRIVER_BUILD] WebDriver initialized successfully")
+        return driver
+        
+    except Exception as e:
+        logger.error(f"[DRIVER_BUILD] Critical error building driver: {str(e)}")
+        logger.error(f"[DRIVER_BUILD] Exception type: {type(e).__name__}")
+        raise
 
 
 def _normalize_url(url: str) -> str:
@@ -229,56 +258,113 @@ def scrape_website(
     """
     driver = None
     url = _normalize_url(url)
+    logger.info(f"[SCRAPE_WEBSITE] Starting scrape of: {url}")
+    logger.debug(f"[SCRAPE_WEBSITE] Config - wait_seconds={wait_seconds}, scroll_passes={scroll_passes}, max_scrolls={max_scrolls}")
+    
     try:
+        logger.info("[SCRAPE_WEBSITE] Building WebDriver...")
         driver = _build_driver()
+        logger.info("[SCRAPE_WEBSITE] WebDriver built successfully")
+        
         driver.set_page_load_timeout(wait_seconds)
+        logger.debug(f"[SCRAPE_WEBSITE] Page load timeout set to {wait_seconds}s")
+        
         try:
+            logger.info(f"[SCRAPE_WEBSITE] Navigating to: {url}")
             driver.get(url)
-        except TimeoutException:
-            logger.warning("Page load timed out, attempting to use partial HTML: %s", url)
+            logger.info(f"[SCRAPE_WEBSITE] Page load completed")
+        except TimeoutException as te:
+            logger.warning(f"[SCRAPE_WEBSITE] Page load timed out after {wait_seconds}s, attempting to use partial HTML: {url}")
             # Stop pending network activity; the DOM may already contain the
             # product grid even though Chrome was still loading assets.
             try:
                 driver.execute_script("window.stop();")
-            except WebDriverException:
-                pass
-
-        WebDriverWait(driver, wait_seconds).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
-
+                logger.debug("[SCRAPE_WEBSITE] Window.stop() executed")
+            except WebDriverException as we:
+                logger.debug(f"[SCRAPE_WEBSITE] window.stop() failed (non-critical): {str(we)}")
+        
+        logger.info("[SCRAPE_WEBSITE] Waiting for <body> element...")
+        try:
+            WebDriverWait(driver, wait_seconds).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            logger.info("[SCRAPE_WEBSITE] <body> element detected")
+        except TimeoutException:
+            logger.error("[SCRAPE_WEBSITE] Timeout waiting for <body> element")
+            return ScrapeResult(url=url, html="", success=False, error="Timeout waiting for page to load (body not found)")
+        
         # Guarantee at least `scroll_passes` scrolls (old behavior), then
         # keep going until height stabilizes or max_scrolls is hit.
-        for _ in range(scroll_passes):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(scroll_pause)
-
+        logger.info(f"[SCRAPE_WEBSITE] Beginning initial {scroll_passes} scroll passes...")
+        for i in range(scroll_passes):
+            try:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                logger.debug(f"[SCRAPE_WEBSITE] Scroll pass {i+1}/{scroll_passes} completed")
+                time.sleep(scroll_pause)
+            except WebDriverException as we:
+                logger.warning(f"[SCRAPE_WEBSITE] Error during scroll pass {i+1}: {str(we)}")
+        
+        logger.info(f"[SCRAPE_WEBSITE] Scrolling to stable height (max {max_scrolls} passes)...")
         _scroll_until_stable(
             driver,
             scroll_pause=scroll_pause,
             max_scrolls=max(max_scrolls - scroll_passes, 0),
         )
+        logger.info("[SCRAPE_WEBSITE] Page scrolling complete")
 
+        logger.debug("[SCRAPE_WEBSITE] Extracting page source...")
         html = driver.page_source
+        logger.debug(f"[SCRAPE_WEBSITE] Page source extracted: {len(html) if html else 0} bytes")
+        
         if html and "<body" in html.lower():
+            logger.info(f"[SCRAPE_WEBSITE] Success: Scraped {len(html)} bytes from {url}")
             return ScrapeResult(url=url, html=html, success=True)
+        
+        logger.warning("[SCRAPE_WEBSITE] Page loaded but no readable HTML found")
         return ScrapeResult(url=url, html="", success=False, error="Page loaded without readable HTML")
 
-    except TimeoutException:
-        logger.warning("Timed out waiting for page to load: %s", url)
-        return ScrapeResult(url=url, html="", success=False, error="Page load timed out")
+    except TimeoutException as te:
+        logger.error(f"[SCRAPE_WEBSITE] Timeout exception: {str(te)}")
+        return ScrapeResult(url=url, html="", success=False, error=f"Page load timed out: {str(te)}")
 
-    except WebDriverException as e:
-        logger.error("WebDriver error scraping %s: %s", url, e)
-        return ScrapeResult(url=url, html="", success=False, error=str(e))
+    except WebDriverException as we:
+        logger.error(f"[SCRAPE_WEBSITE] WebDriver exception: {str(we)}")
+        logger.error(f"[SCRAPE_WEBSITE] Exception type: {type(we).__name__}")
+        return ScrapeResult(url=url, html="", success=False, error=f"WebDriver error: {str(we)}")
+    
+    except Exception as e:
+        logger.error(f"[SCRAPE_WEBSITE] Unexpected exception: {str(e)}")
+        logger.error(f"[SCRAPE_WEBSITE] Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"[SCRAPE_WEBSITE] Traceback: {traceback.format_exc()}")
+        return ScrapeResult(url=url, html="", success=False, error=f"Unexpected error: {str(e)}")
 
     finally:
         if driver is not None:
-            driver.quit()
+            try:
+                logger.debug("[SCRAPE_WEBSITE] Closing WebDriver...")
+                driver.quit()
+                logger.debug("[SCRAPE_WEBSITE] WebDriver closed successfully")
+            except Exception as e:
+                logger.warning(f"[SCRAPE_WEBSITE] Error closing WebDriver: {str(e)}")
 
 
 def _is_same_domain(url: str, base_domain: str) -> bool:
     return urlparse(url).netloc == base_domain
+
+
+def _link_priority(url: str) -> int:
+    """
+    Returns a priority score (lower = crawled sooner).
+    Category/collection pages get priority 0, product detail pages get 1,
+    everything else gets 2.
+    """
+    lower = url.lower()
+    if any(kw in lower for kw in CATEGORY_LINK_KEYWORDS):
+        return 0
+    if "/product/" in lower or "/products/" in lower or "/item/" in lower:
+        return 1
+    return 2
 
 
 def _extract_links(html: str, base_url: str) -> List[str]:
@@ -314,37 +400,93 @@ def _is_product_or_category_url(url: str) -> bool:
     return True
 
 
+def _discover_via_sitemap(base_url: str) -> List[str]:
+    """
+    Attempts to find URLs via common sitemap locations.
+    Returns a list of discovered URLs (may be empty).
+    """
+    sitemap_paths = [
+        "/sitemap.xml",
+        "/sitemap_index.xml",
+        "/sitemap/products.xml",
+        "/sitemap/categories.xml",
+        "/products/sitemap.xml",
+    ]
+    discovered: Set[str] = set()
+    base_domain = urlparse(base_url).netloc
+
+    for path in sitemap_paths:
+        try:
+            sitemap_url = f"{base_url.scheme}://{base_domain}{path}"
+            resp = requests.get(sitemap_url, timeout=10, verify=False)
+            if resp.status_code != 200:
+                continue
+            root = ET.fromstring(resp.content)
+            # XML namespaces vary; handle the common ones
+            ns = ""
+            if root.tag.startswith("{"):
+                ns = root.tag[:root.tag.index("}") + 1]
+            for loc in root.iter(f"{ns}loc"):
+                url_text = loc.text.strip() if loc.text else ""
+                if url_text:
+                    discovered.add(url_text.rstrip("/"))
+        except Exception:
+            continue
+
+    return list(discovered)
+
+
 def crawl_website(
     start_url: str,
     wait_seconds: int = 20,
     scroll_passes: int = 3,
-    max_pages: int = 30,
+    max_pages: int = 100,
 ) -> ScrapeResult:
     """
-    BFS crawl starting from `start_url`.
-    Visits product/category pages within the same domain, scrolls each for
-    lazy-loaded products, and aggregates all HTML into one ScrapeResult.
-    `max_pages` caps the total pages crawled to avoid runaway crawls.
+    Priority-queue BFS crawl starting from `start_url`.
+    Category/collection pages are crawled before individual product pages.
+    Also attempts sitemap discovery for larger catalogs.
+    Returns aggregated HTML from all visited pages.
     """
+    logger.info(f"[CRAWL_WEBSITE] Starting crawl: {start_url}")
+    logger.debug(f"[CRAWL_WEBSITE] Config - wait_seconds={wait_seconds}, scroll_passes={scroll_passes}, max_pages={max_pages}")
+    
     start_url = _normalize_url(start_url)
-    base_domain = urlparse(start_url).netloc
+    base_parsed = urlparse(start_url)
+    base_domain = base_parsed.netloc
+    logger.debug(f"[CRAWL_WEBSITE] Base domain: {base_domain}")
 
     visited: Set[str] = set()
-    queue: deque = deque([start_url])
+    # Min-heap of (priority, url)
+    heap: List[Tuple[int, str]] = []
+    heappush(heap, (_link_priority(start_url), start_url))
     all_html_parts: List[str] = []
     pages_crawled = 0
     last_error: Optional[str] = None
 
-    while queue and pages_crawled < max_pages:
-        url = queue.popleft()
+    # Try sitemap discovery first
+    logger.info("[CRAWL_WEBSITE] Attempting sitemap discovery...")
+    try:
+        sitemap_urls = _discover_via_sitemap(base_parsed)
+        logger.info(f"[CRAWL_WEBSITE] Sitemap discovery found {len(sitemap_urls)} URLs")
+        for su in sitemap_urls:
+            if su not in visited:
+                heappush(heap, (_link_priority(su), su))
+    except Exception as e:
+        logger.warning(f"[CRAWL_WEBSITE] Sitemap discovery failed (non-critical): {str(e)}")
+
+    while heap and pages_crawled < max_pages:
+        _, url = heappop(heap)
         if url in visited:
+            logger.debug(f"[CRAWL_WEBSITE] Skipping already-visited URL: {url}")
             continue
         visited.add(url)
 
         if not _is_product_or_category_url(url):
+            logger.debug(f"[CRAWL_WEBSITE] Skipping non-product URL: {url}")
             continue
 
-        logger.info("Crawling [%d/%d]: %s", pages_crawled + 1, max_pages, url)
+        logger.info(f"[CRAWL_WEBSITE] Crawling [{pages_crawled + 1}/{max_pages}]: {url}")
 
         result = scrape_website(
             url,
@@ -353,23 +495,26 @@ def crawl_website(
         )
 
         if result.success:
+            logger.info(f"[CRAWL_WEBSITE] Successfully scraped {len(result.html)} bytes from {url}")
             all_html_parts.append(result.html)
             pages_crawled += 1
 
             new_links = _extract_links(result.html, url)
+            logger.debug(f"[CRAWL_WEBSITE] Extracted {len(new_links)} links from {url}")
             for link in new_links:
                 if link not in visited:
-                    queue.append(link)
+                    heappush(heap, (_link_priority(link), link))
         else:
             last_error = result.error
-            logger.warning("Failed to crawl %s: %s", url, result.error)
+            logger.warning(f"[CRAWL_WEBSITE] Failed to crawl {url}: {result.error}")
 
     if not all_html_parts:
         error_msg = last_error or "No pages could be crawled"
+        logger.error(f"[CRAWL_WEBSITE] Crawl failed - no pages scraped. Error: {error_msg}")
         return ScrapeResult(url=start_url, html="", success=False, error=error_msg)
 
     combined_html = "<html><body>" + "".join(all_html_parts) + "</body></html>"
-    logger.info("Crawl complete: %d pages, %d chars total", pages_crawled, len(combined_html))
+    logger.info(f"[CRAWL_WEBSITE] Crawl complete: {pages_crawled} pages, {len(combined_html)} chars total")
     return ScrapeResult(url=start_url, html=combined_html, success=True)
 
 

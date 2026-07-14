@@ -48,6 +48,8 @@ class ChatRequest(BaseModel):
     message: Optional[str] = None  # free-text follow-up, if any
 
     category: Optional[str] = None
+    # Comma-separated item types (e.g. "shirt,pant,shoes") the user wants.
+    item_types: Optional[str] = None
     age: Optional[int] = None
     height_cm: Optional[float] = None
     weight_kg: Optional[float] = None
@@ -65,3 +67,4 @@ class ChatResponse(BaseModel):
     is_ready: bool
     shirt_size: Optional[str] = None
     pant_size: Optional[str] = None
+    item_types: Optional[str] = None

@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database.db import get_db
-from database.crud import get_user_by_session, get_latest_preference
+from database.crud import (
+    get_user_by_session,
+    get_latest_preference,
+    get_pending_item_types,
+)
 from agents.graph import app_graph
 from agents.state import ConversationState
 from api.schemas import ChatRequest, ChatResponse
@@ -45,6 +49,20 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
             return request_value
         return getattr(latest_pref, fallback_attr, None) if latest_pref else None
 
+    # Handle item_types: check request, then preference, then pending on User
+    item_types_raw = request.item_types
+    if not item_types_raw and latest_pref and latest_pref.item_types:
+        item_types_raw = latest_pref.item_types
+    if not item_types_raw:
+        pending = get_pending_item_types(db, user)
+        item_types_raw = pending
+
+    item_types_list = (
+        [t.strip() for t in item_types_raw.split(",") if t.strip()]
+        if item_types_raw
+        else None
+    )
+
     state: ConversationState = {
         "session_id": user.session_id,
         "user_id": user.id,
@@ -53,6 +71,7 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
         "phone": user.phone,
         "gender": user.gender.value,
         "category": _pick(request.category, "category"),
+        "item_types": item_types_list,
         "age": _pick(request.age, "age"),
         "height_cm": _pick(request.height_cm, "height_cm"),
         "weight_kg": _pick(request.weight_kg, "weight_kg"),
@@ -78,10 +97,14 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
         result = app_graph.invoke(result)
         advances += 1
 
+    item_types_result = result.get("item_types")
+    item_types_str = ",".join(item_types_result) if item_types_result else None
+
     return ChatResponse(
         reply=result.get("reply"),
         stage=result.get("stage", "UNKNOWN"),
         is_ready=result.get("is_ready", False),
         shirt_size=result.get("shirt_size"),
         pant_size=result.get("pant_size"),
+        item_types=item_types_str,
     )
