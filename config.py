@@ -37,7 +37,7 @@ class Settings:
 
     # API
     CORS_ALLOW_ORIGINS: tuple = tuple(
-        os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
+        os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
     )
 
 

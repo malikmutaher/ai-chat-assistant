@@ -4,18 +4,17 @@ FastAPI app entrypoint.
 Run with:
     uvicorn main:app --reload
 
-Then point shopping_assistant_frontend.html's BACKEND_URL at this server
-(default http://localhost:8000) and uncomment the real fetch() calls in
-its <script> block.
+Then point index.html's BACKEND_URL at this server
+(default http://localhost:8000).
 """
 
-from pathlib import Path 
+from pathlib import Path
 import logging
 import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from config import settings
 from database.db import init_db
@@ -44,7 +43,7 @@ logger.info("[STARTUP] FastAPI app created")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.CORS_ALLOW_ORIGINS),
-    allow_credentials=True,
+    allow_credentials=False,  # we don't use cookies; keep this False so a wildcard origin is actually valid
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -63,11 +62,18 @@ def health():
     logger.debug("[HEALTH_CHECK] Health check requested")
     return {"status": "ok"}
 
-# Serve frontend static files (must be last so API routes take priority)
+# Serve ONLY the frontend file — never the whole project directory
+# (that used to expose config.py, database/models.py, and the live
+# shopping_assistant.db over HTTP).
 BASE_DIR = Path(__file__).parent
-app.mount("/", StaticFiles(directory=str(BASE_DIR), html=True), name="static")
+FRONTEND_FILE = BASE_DIR / "index.html"
 
-logger.info(f"[STARTUP] Static files mounted from: {BASE_DIR}")
+
+@app.get("/")
+def serve_frontend():
+    return FileResponse(str(FRONTEND_FILE))
+
+logger.info(f"[STARTUP] Frontend will be served from: {FRONTEND_FILE}")
 
 
 @app.on_event("startup")
